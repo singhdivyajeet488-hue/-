@@ -375,17 +375,25 @@ async function startServer() {
         // Find or create '🎫 ᴛɪᴄᴋᴇᴛꜱ' category
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴛɪᴄᴋᴇᴛꜱ');
         
-        // Check for ANY existing ticket or application channel for this user
+        // GLOBAL check for ANY existing ticket or application channel for this user across ALL guilds
         const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
-        const existingChannel = guild.channels.cache.find(c => 
-          c.type === ChannelType.GuildText && 
-          allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
-          c.permissionOverwrites.cache.has(interaction.user.id)
-        );
+        let existingChannel: any = null;
+
+        for (const [gId, g] of client.guilds.cache) {
+          const found = g.channels.cache.find(c => 
+            c.type === ChannelType.GuildText && 
+            allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
+            (c.permissionOverwrites.cache.has(interaction.user.id) || c.name.toLowerCase().endsWith(interaction.user.username.toLowerCase()))
+          );
+          if (found) {
+            existingChannel = found;
+            break;
+          }
+        }
 
         if (existingChannel) {
           await interaction.editReply({ 
-            content: `❌ You already have an active ticket or application: ${existingChannel}. Please close it before opening a new one.` 
+            content: `❌ You already have an active ticket or application: ${existingChannel} in **${existingChannel.guild.name}**. Please close it before opening a new one.` 
           });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
@@ -460,17 +468,25 @@ async function startServer() {
       try {
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
         
-        // Check for ANY existing ticket or application channel for this user
+        // GLOBAL check for ANY existing ticket or application channel for this user across ALL guilds
         const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
-        const existingChannel = guild.channels.cache.find(c => 
-          c.type === ChannelType.GuildText && 
-          allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
-          c.permissionOverwrites.cache.has(interaction.user.id)
-        );
+        let existingChannel: any = null;
+
+        for (const [gId, g] of client.guilds.cache) {
+          const found = g.channels.cache.find(c => 
+            c.type === ChannelType.GuildText && 
+            allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
+            (c.permissionOverwrites.cache.has(interaction.user.id) || c.name.toLowerCase().endsWith(interaction.user.username.toLowerCase()))
+          );
+          if (found) {
+            existingChannel = found;
+            break;
+          }
+        }
 
         if (existingChannel) {
           await interaction.editReply({ 
-            content: `❌ You already have an active ticket or application: ${existingChannel}. Please close it before opening a new one.` 
+            content: `❌ You already have an active ticket or application: ${existingChannel} in **${existingChannel.guild.name}**. Please close it before opening a new one.` 
           });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
