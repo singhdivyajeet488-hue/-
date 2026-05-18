@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { 
   Client, 
@@ -50,8 +51,23 @@ let customFormConfig = {
   title: '📝 Staff Application',
   description: 'Click below to start.',
   buttonLabel: 'Apply Now',
-  questions: ['What is your age?', 'Previous experience?', 'Why do you want to join?']
+  questions: [
+    'What is your Discord username and age?',
+    'Why do you want to become a staff member on this server?',
+    'How would you handle a member breaking the rules?',
+    'How active can you be on the server each day?',
+    'Why should we choose you for the staff team?'
+  ]
 };
+
+const configPath = path.join(process.cwd(), 'customFormConfig.json');
+try {
+  if (fs.existsSync(configPath)) {
+    customFormConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  }
+} catch(err) {
+  console.error('Failed to parse customFormConfig', err);
+}
 
 let staffRoleIds: string[] = [];
 
@@ -157,7 +173,7 @@ async function startServer() {
 
         const closeButton = new ButtonBuilder()
           .setCustomId('close_ticket')
-          .setLabel('Close (Staff Only)')
+          .setLabel('Close Ticket')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -301,7 +317,7 @@ async function startServer() {
 
         const closeButton = new ButtonBuilder()
           .setCustomId('close_ticket')
-          .setLabel('Close (Staff Only)')
+          .setLabel('Close Ticket')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -380,7 +396,18 @@ async function startServer() {
           answers: []
         });
 
-        await channel.send({ content: `<@${interaction.user.id}> Welcome! Let's start your application.\n\n**Question 1/${customFormConfig.questions.length}:** ${customFormConfig.questions[0]}` });
+        const closeButtonInit = new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('Close Application')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🔒');
+
+        const rowInit = new ActionRowBuilder<ButtonBuilder>().addComponents(closeButtonInit);
+
+        await channel.send({ 
+          content: `<@${interaction.user.id}> Welcome! Let's start your application.\n\n**Question 1/${customFormConfig.questions.length}:** ${customFormConfig.questions[0]}`,
+          components: [rowInit]
+        });
         
         await interaction.editReply({ content: `✅ Application started in ${channel}` });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
@@ -396,12 +423,15 @@ async function startServer() {
       const channel = interaction.channel as TextChannel;
       if (!channel || channel.type !== ChannelType.GuildText) return;
 
-      // Permission Check: Only staff/admins can close
+      // Permission Check: Only staff/admins or the ticket creator can close
       const member = interaction.member as any;
       const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
-      if (!isStaff) {
+      const userSuffix = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const isCreator = channel.name.includes(userSuffix);
+      
+      if (!isStaff && !isCreator) {
         return interaction.reply({ 
-          content: '❌ Only staff members can close this ticket!', 
+          content: '❌ Only staff members or the ticket creator can close this ticket!', 
           ephemeral: true 
         });
       }
@@ -608,6 +638,7 @@ async function startServer() {
         buttonLabel: buttonLabel || 'Apply Now',
         questions: Array.isArray(questions) && questions.length > 0 ? questions : ['Why do you want to apply?']
       };
+      fs.writeFileSync(configPath, JSON.stringify(customFormConfig, null, 2));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: 'Failed to save form config' });
@@ -629,6 +660,7 @@ async function startServer() {
         buttonLabel: buttonLabel || 'Apply Now',
         questions: Array.isArray(questions) && questions.length > 0 ? questions : ['Why do you want to apply?']
       };
+      fs.writeFileSync(configPath, JSON.stringify(customFormConfig, null, 2));
 
       const embed = new EmbedBuilder()
         .setTitle(customFormConfig.title)

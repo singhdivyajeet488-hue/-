@@ -139,9 +139,11 @@ export default function App() {
   const [formDesc, setFormDesc] = useState('Click the button below to start your application.');
   const [formButton, setFormButton] = useState('Apply Now');
   const [formQuestions, setFormQuestions] = useState([
-    'What is your age?',
-    'Previous experience?',
-    'Why do you want to join?'
+    'What is your Discord username and age?',
+    'Why do you want to become a staff member on this server?',
+    'How would you handle a member breaking the rules?',
+    'How active can you be on the server each day?',
+    'Why should we choose you for the staff team?'
   ]);
   const [staffRoles, setStaffRoles] = useState<string[]>([]);
   const [newRoleInput, setNewRoleInput] = useState('');
