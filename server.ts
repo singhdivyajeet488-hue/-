@@ -140,6 +140,15 @@ async function startServer() {
     {
       name: 'status',
       description: 'Check the bot status',
+    },
+    {
+      name: 'delete_all_tickets',
+      description: 'Delete all active tickets and applications (Admin only)',
+      default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    },
+    {
+      name: 'close',
+      description: 'Close the current ticket or application (Staff only)',
     }
   ];
 
@@ -275,6 +284,101 @@ async function startServer() {
 
       if (interaction.commandName === 'status') {
         await interaction.reply({ content: `✅ Bot is online! Latency: ${client.ws.ping}ms`, ephemeral: true });
+      }
+
+      if (interaction.commandName === 'delete_all_tickets') {
+        const member = interaction.member as any;
+        const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
+        if (!isStaff) {
+          return interaction.reply({ content: '❌ Only staff members can use this command.', ephemeral: true });
+        }
+
+        await interaction.reply({ content: '🗑️ Deleting all tickets and applications...' });
+        
+        let deletedCount = 0;
+        const guild = interaction.guild;
+        if (guild) {
+           const channelsToDelete = guild.channels.cache.filter((c: any) => 
+              c.type === ChannelType.GuildText && 
+              ['support-', 'report-', 'partner-', 'army-', 'app-'].some(cat => c.name.startsWith(cat))
+           );
+
+           for (const [id, c] of channelsToDelete) {
+             try {
+                await c.delete();
+                deletedCount++;
+             } catch(err) {
+                console.error('Failed to delete channel:', err);
+             }
+           }
+        }
+        
+        // Reset users list so they can create new tickets/apps
+        ticketUsers = [];
+        try { fs.writeFileSync(ticketUsersPath, JSON.stringify(ticketUsers, null, 2)); } catch(e){}
+        appliedUsers = [];
+        try { fs.writeFileSync(appliedUsersPath, JSON.stringify(appliedUsers, null, 2)); } catch(e){}
+
+        try {
+           if (interaction.channel && !('deleted' in interaction.channel)) {
+             await interaction.editReply({ content: `✅ Deleted ${deletedCount} tickets and applications. Data reset.` });
+           }
+        } catch(e) {}
+      }
+
+      if (interaction.commandName === 'close') {
+        const channel = interaction.channel as TextChannel;
+        if (!channel || channel.type !== ChannelType.GuildText) return;
+
+        const isAppTicket = channel.name.startsWith('app-');
+        const isTicket = ['support-', 'report-', 'partner-', 'army-'].some(cat => channel.name.startsWith(cat));
+
+        if (!isAppTicket && !isTicket) {
+           return interaction.reply({ content: '❌ This command can only be used in tickets or applications.', ephemeral: true });
+        }
+
+        const member = interaction.member as any;
+        const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
+        
+        if (!isStaff) {
+          return interaction.reply({ 
+            content: '❌ Only staff members can close tickets and applications!', 
+            ephemeral: true 
+          });
+        }
+
+        await interaction.reply({ content: '🎫 Archiving and closing in 5 seconds...' });
+
+        const logEntry = {
+          id: channel.id,
+          user: interaction.user.tag,
+          guild: interaction.guild?.name,
+          timestamp: new Date().toISOString(),
+          category: (channel.name.split('-')[0]) || 'General',
+          transcript: ''
+        };
+
+        try {
+          const messages = await channel.messages.fetch({ limit: 50 });
+          logEntry.transcript = messages
+            .filter(m => !m.author.bot)
+            .reverse()
+            .map(m => `${m.author.username}: ${m.content}`)
+            .join('\n');
+        } catch (err) {
+          console.error('Transcript fetch failed:', err);
+        }
+        
+        ticketLogs.unshift(logEntry);
+        if (ticketLogs.length > 50) ticketLogs.pop();
+
+        setTimeout(async () => {
+          try {
+            await channel.delete();
+          } catch (error) {
+            console.error('Failed to delete channel:', error);
+          }
+        }, 5000);
       }
     }
 
