@@ -80,6 +80,35 @@ const appSessions = new Map<string, {
   answers: { question: string, answer: string }[];
 }>();
 
+// userId -> channelId (persistent)
+let activeTicketsMap = new Map<string, string>();
+const TICKET_TRACK_PATH = path.join(process.cwd(), 'activeTicketsTrack.json');
+
+function saveTicketTrack() {
+  try {
+    const data = Object.fromEntries(activeTicketsMap);
+    fs.writeFileSync(TICKET_TRACK_PATH, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('Failed to save ticket track:', e);
+  }
+}
+
+function loadTicketTrack() {
+  try {
+    if (fs.existsSync(TICKET_TRACK_PATH)) {
+      const data = JSON.parse(fs.readFileSync(TICKET_TRACK_PATH, 'utf8'));
+      activeTicketsMap = new Map(Object.entries(data));
+    }
+  } catch (e) {
+    console.error('Failed to load ticket track:', e);
+  }
+}
+
+loadTicketTrack();
+
+// Global set to prevent concurrent creation requests
+const creationLocks = new Set<string>();
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -150,9 +179,33 @@ async function startServer() {
     }
   }
 
+  client.on('channelDelete', (channel: any) => {
+    if (channel.type === ChannelType.GuildText) {
+      for (const [userId, channelId] of activeTicketsMap.entries()) {
+        if (channelId === channel.id) {
+          activeTicketsMap.delete(userId);
+          saveTicketTrack();
+          break;
+        }
+      }
+    }
+  });
+
   client.on('ready', () => {
     console.log(`🚀 Logged in as ${client.user?.tag}!`);
     registerCommands();
+    loadTicketTrack();
+  });
+
+  client.on('channelDelete', (channel) => {
+    // Find who this channel belonged to and clear from track
+    for (const [userId, chId] of activeTicketsMap.entries()) {
+      if (chId === channel.id) {
+        activeTicketsMap.delete(userId);
+        saveTicketTrack();
+        break;
+      }
+    }
   });
 
   client.on('messageCreate', async (message) => {
@@ -289,12 +342,15 @@ async function startServer() {
         // Reset all data
         ticketLogs.length = 0;
         appSessions.clear();
+        activeTicketsMap.clear();
+        saveTicketTrack();
         
         try {
           const tPath = path.join(process.cwd(), 'ticketUsers.json');
           if (fs.existsSync(tPath)) fs.unlinkSync(tPath);
           const aPath = path.join(process.cwd(), 'appliedUsers.json');
           if (fs.existsSync(aPath)) fs.unlinkSync(aPath);
+          if (fs.existsSync(TICKET_TRACK_PATH)) fs.unlinkSync(TICKET_TRACK_PATH);
         } catch(e) {}
         
         try {
@@ -363,41 +419,74 @@ async function startServer() {
     // Handle Dropdown Selection
     if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_category') {
       const category = interaction.values[0];
+      const userId = interaction.user.id;
+
+      if (creationLocks.has(userId)) {
+        return interaction.reply({ content: '⏳ Please wait, your previous request is still being processed...', ephemeral: true });
+      }
 
       const categoryLabel = categoryMap[category] || (category.charAt(0).toUpperCase() + category.slice(1));
-
       const guild = interaction.guild;
       if (!guild) return;
 
-      await interaction.reply({ content: `⏳ Creating your **${categoryLabel}** ticket...`, ephemeral: true });
+      creationLocks.add(userId);
+      await interaction.reply({ content: `⏳ Preparing your **${categoryLabel}** ticket...`, ephemeral: true });
 
       try {
-        // Find or create '🎫 ᴛɪᴄᴋᴇᴛꜱ' category
-        let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴛɪᴄᴋᴇᴛꜱ');
-        
-        // GLOBAL check for ANY existing ticket or application channel for this user across ALL guilds
-        const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
-        let existingChannel: any = null;
+        // 1. Check persistence map and verify existence
+        const existingId = activeTicketsMap.get(userId);
+        if (existingId) {
+          let foundChannel = null;
+          try {
+            foundChannel = await client.channels.fetch(existingId);
+          } catch (e) {}
+
+          if (foundChannel) {
+            creationLocks.delete(userId);
+            await interaction.editReply({ 
+              content: `❌ **Limit Reached:** You already have an active interaction: ${foundChannel} in **${(foundChannel as any).guild?.name || 'this server'}**.\n\nPlease close your existing ticket or application before opening a new one.` 
+            });
+            return;
+          } else {
+            activeTicketsMap.delete(userId);
+            saveTicketTrack();
+          }
+        }
+
+        // 2. EXTRA SAFETY: GLOBAL check across ALL guilds (in case map is out of sync)
+        let fallbackFound: any = null;
+        const normalizedUser = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const ticketPhrases = ['support', 'report', 'partner', 'army', 'app', 'ticket', 'application'];
 
         for (const [gId, g] of client.guilds.cache) {
-          const found = g.channels.cache.find(c => 
-            c.type === ChannelType.GuildText && 
-            allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
-            (c.permissionOverwrites.cache.has(interaction.user.id) || c.name.toLowerCase().endsWith(interaction.user.username.toLowerCase()))
-          );
+          const found = g.channels.cache.find(c => {
+             if (c.type !== ChannelType.GuildText) return false;
+             
+             const hasPerm = c.permissionOverwrites.cache.has(userId);
+             const cName = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+             const nameMatch = cName.includes(normalizedUser) && ticketPhrases.some(p => cName.includes(p));
+             const catMatch = c.parent?.name.includes('🎫') || c.parent?.name.toLowerCase().includes('ticket');
+             
+             return hasPerm && (nameMatch || catMatch);
+          });
           if (found) {
-            existingChannel = found;
+            fallbackFound = found;
             break;
           }
         }
 
-        if (existingChannel) {
+        if (fallbackFound) {
+          activeTicketsMap.set(userId, fallbackFound.id);
+          saveTicketTrack();
+          creationLocks.delete(userId);
           await interaction.editReply({ 
-            content: `❌ You already have an active ticket or application: ${existingChannel} in **${existingChannel.guild.name}**. Please close it before opening a new one.` 
+            content: `❌ **Limit Reached:** You already have an active interaction: ${fallbackFound} in **${fallbackFound.guild.name}**.\n\nPlease close your existing ticket or application before opening a new one.` 
           });
-          setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
         }
+
+        // Find or create '🎫 ᴛɪᴄᴋᴇᴛꜱ' category
+        let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴛɪᴄᴋᴇᴛꜱ');
 
         if (!categoryChannel) {
           try {
@@ -447,12 +536,18 @@ async function startServer() {
         await channel.send({ embeds: [ticketEmbed], components: [row] });
         await interaction.editReply({ content: `✅ Ticket created: ${channel}` });
 
+        activeTicketsMap.set(userId, channel.id);
+        saveTicketTrack();
+        
+        creationLocks.delete(userId);
+        
         // Auto-delete the confirmation message after 5 seconds
         setTimeout(() => {
           interaction.deleteReply().catch(() => {});
         }, 5000);
 
       } catch (error) {
+        creationLocks.delete(userId);
         console.error('Failed to create ticket channel:', error);
         await interaction.editReply({ content: '❌ Failed to create your ticket. Please make sure I have "Manage Channels" permissions.' });
       }
@@ -461,36 +556,70 @@ async function startServer() {
     // Handle Form Button Click
     if (interaction.isButton() && interaction.customId === 'open_custom_form') {
       const guild = interaction.guild;
+      const userId = interaction.user.id;
       if (!guild) return;
 
+      if (creationLocks.has(userId)) {
+        return interaction.reply({ content: '⏳ Please wait, your previous request is still being processed...', ephemeral: true });
+      }
+
+      creationLocks.add(userId);
       await interaction.reply({ content: `⏳ Setting up your application...`, ephemeral: true });
 
       try {
-        let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
-        
-        // GLOBAL check for ANY existing ticket or application channel for this user across ALL guilds
-        const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
-        let existingChannel: any = null;
+        // 1. Check persistence map and verify existence
+        const existingId = activeTicketsMap.get(userId);
+        if (existingId) {
+          let foundChannel = null;
+          try {
+            foundChannel = await client.channels.fetch(existingId);
+          } catch (e) {}
+
+          if (foundChannel) {
+            creationLocks.delete(userId);
+            await interaction.editReply({ 
+              content: `❌ **Limit Reached:** You already have an active interaction: ${foundChannel} in **${(foundChannel as any).guild?.name || 'this server'}**.\n\nPlease close your existing ticket or application before opening a new one.` 
+            });
+            return;
+          } else {
+            activeTicketsMap.delete(userId);
+            saveTicketTrack();
+          }
+        }
+
+        // 2. EXTRA SAFETY: GLOBAL check across ALL guilds
+        let fallbackFound: any = null;
+        const normalizedUser = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const ticketPhrases = ['support', 'report', 'partner', 'army', 'app', 'ticket', 'application'];
 
         for (const [gId, g] of client.guilds.cache) {
-          const found = g.channels.cache.find(c => 
-            c.type === ChannelType.GuildText && 
-            allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
-            (c.permissionOverwrites.cache.has(interaction.user.id) || c.name.toLowerCase().endsWith(interaction.user.username.toLowerCase()))
-          );
+          const found = g.channels.cache.find(c => {
+             if (c.type !== ChannelType.GuildText) return false;
+             
+             const hasPerm = c.permissionOverwrites.cache.has(userId);
+             const cName = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+             const nameMatch = cName.includes(normalizedUser) && ticketPhrases.some(p => cName.includes(p));
+             const catMatch = c.parent?.name.includes('🎫') || c.parent?.name.toLowerCase().includes('ticket');
+             
+             return hasPerm && (nameMatch || catMatch);
+          });
           if (found) {
-            existingChannel = found;
+            fallbackFound = found;
             break;
           }
         }
 
-        if (existingChannel) {
+        if (fallbackFound) {
+          activeTicketsMap.set(userId, fallbackFound.id);
+          saveTicketTrack();
+          creationLocks.delete(userId);
           await interaction.editReply({ 
-            content: `❌ You already have an active ticket or application: ${existingChannel} in **${existingChannel.guild.name}**. Please close it before opening a new one.` 
+            content: `❌ **Limit Reached:** You already have an active interaction: ${fallbackFound} in **${fallbackFound.guild.name}**.\n\nPlease close your existing ticket or application before opening a new one.` 
           });
-          setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
         }
+
+        let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
 
         if (!categoryChannel) {
           try {
@@ -541,9 +670,14 @@ async function startServer() {
           components: [rowInit]
         });
         
+        activeTicketsMap.set(userId, channel.id);
+        saveTicketTrack();
+
         await interaction.editReply({ content: `✅ Application started in ${channel}` });
+        creationLocks.delete(userId);
         setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
       } catch (error) {
+         creationLocks.delete(userId);
          console.error('Failed to create app ticket:', error);
          await interaction.editReply({ content: '❌ Failed to start application.' });
       }
@@ -720,11 +854,15 @@ async function startServer() {
       }
       
       ticketLogs.length = 0;
+      activeTicketsMap.clear();
+      saveTicketTrack();
+
       try {
         const tPath = path.join(process.cwd(), 'ticketUsers.json');
         if (fs.existsSync(tPath)) fs.unlinkSync(tPath);
         const aPath = path.join(process.cwd(), 'appliedUsers.json');
         if (fs.existsSync(aPath)) fs.unlinkSync(aPath);
+        if (fs.existsSync(TICKET_TRACK_PATH)) fs.unlinkSync(TICKET_TRACK_PATH);
       } catch(e) {}
 
       res.json({ success: true, deletedCount });
