@@ -27,6 +27,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
 const PORT = 3000;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
@@ -47,6 +54,14 @@ let customFormConfig = {
 };
 
 let staffRoleIds: string[] = [];
+
+const appSessions = new Map<string, {
+  userId: string;
+  channelId: string;
+  questions: string[];
+  currentQuestionIndex: number;
+  answers: { question: string, answer: string }[];
+}>();
 
 async function startServer() {
   const app = express();
@@ -112,6 +127,49 @@ async function startServer() {
   client.on('ready', () => {
     console.log(`🚀 Logged in as ${client.user?.tag}!`);
     registerCommands();
+  });
+
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    const session = appSessions.get(message.channel.id);
+    if (session && session.userId === message.author.id) {
+      session.answers.push({
+        question: session.questions[session.currentQuestionIndex],
+        answer: message.content
+      });
+
+      session.currentQuestionIndex++;
+      
+      if (session.currentQuestionIndex < session.questions.length) {
+        await message.channel.send(`**Question ${session.currentQuestionIndex + 1}/${session.questions.length}:** ${session.questions[session.currentQuestionIndex]}`);
+      } else {
+        appSessions.delete(message.channel.id);
+        
+        const appEmbed = new EmbedBuilder()
+          .setTitle(`${customFormConfig.title}: ${message.author.tag}`)
+          .setDescription('Application completed. Awaiting staff review.')
+          .addFields(
+            session.answers.map(a => ({ name: a.question.substring(0, 256), value: a.answer.substring(0, 1024), inline: false }))
+          )
+          .setColor('#9B59B6')
+          .setTimestamp();
+
+        const closeButton = new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('Close (Staff Only)')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🔒');
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(closeButton);
+
+        await message.channel.send({ 
+          content: `<@${message.author.id}> Form Questions Completed!`,
+          embeds: [appEmbed], 
+          components: [row] 
+        });
+      }
+    }
   });
 
   client.on('interactionCreate', async (interaction: Interaction<CacheType>) => {
@@ -265,38 +323,10 @@ async function startServer() {
 
     // Handle Form Button Click
     if (interaction.isButton() && interaction.customId === 'open_custom_form') {
-      const modal = new ModalBuilder()
-        .setCustomId('custom_form_modal')
-        .setTitle(customFormConfig.title.substring(0, 45) || 'Application Form');
-
-      const inputs = customFormConfig.questions.slice(0, 5).map((q, idx) => {
-        return new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder()
-            .setCustomId(`q_${idx}`)
-            .setLabel(q.substring(0, 45))
-            .setStyle(TextInputStyle.Paragraph)
-            .setRequired(true)
-        );
-      });
-
-      modal.addComponents(...inputs);
-      await interaction.showModal(modal);
-      return;
-    }
-
-    // Handle Form Modal Submit
-    if (interaction.isModalSubmit() && interaction.customId === 'custom_form_modal') {
       const guild = interaction.guild;
       if (!guild) return;
 
-      const answers = customFormConfig.questions.slice(0, 5).map((q, idx) => {
-        return {
-          question: q,
-          answer: interaction.fields.getTextInputValue(`q_${idx}`) || 'N/A'
-        };
-      });
-
-      await interaction.reply({ content: `⏳ Submitting your application...`, ephemeral: true });
+      await interaction.reply({ content: `⏳ Setting up your application...`, ephemeral: true });
 
       try {
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
@@ -341,34 +371,22 @@ async function startServer() {
           ],
         });
 
-        const appEmbed = new EmbedBuilder()
-          .setTitle(`${customFormConfig.title}: ${interaction.user.tag}`)
-          .setDescription('Your application has been received. Please wait for staff review.')
-          .addFields(
-            answers.map(a => ({ name: a.question.substring(0, 256), value: a.answer.substring(0, 1024), inline: false }))
-          )
-          .setColor('#9B59B6')
-          .setTimestamp();
-
-        const closeButton = new ButtonBuilder()
-          .setCustomId('close_ticket')
-          .setLabel('Close (Staff Only)')
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('🔒');
-
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(closeButton);
-
-        await channel.send({ 
-          content: `<@${interaction.user.id}> New Form Submitted.`,
-          embeds: [appEmbed], 
-          components: [row] 
+        // Initialize session
+        appSessions.set(channel.id, {
+          userId: interaction.user.id,
+          channelId: channel.id,
+          questions: customFormConfig.questions,
+          currentQuestionIndex: 0,
+          answers: []
         });
+
+        await channel.send({ content: `<@${interaction.user.id}> Welcome! Let's start your application.\n\n**Question 1/${customFormConfig.questions.length}:** ${customFormConfig.questions[0]}` });
         
-        await interaction.editReply({ content: `✅ Submited successfully in ${channel}` });
+        await interaction.editReply({ content: `✅ Application started in ${channel}` });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
       } catch (error) {
          console.error('Failed to create app ticket:', error);
-         await interaction.editReply({ content: '❌ Failed to process your application form.' });
+         await interaction.editReply({ content: '❌ Failed to start application.' });
       }
       return;
     }
@@ -577,6 +595,25 @@ async function startServer() {
     res.json({ staffRoleIds });
   });
 
+  app.get('/api/form_config', (req, res) => {
+    res.json(customFormConfig);
+  });
+
+  app.post('/api/save_form', (req, res) => {
+    const { title, description, buttonLabel, questions } = req.body;
+    try {
+      customFormConfig = {
+        title: title || 'Application Form',
+        description: description || 'Click below to apply.',
+        buttonLabel: buttonLabel || 'Apply Now',
+        questions: Array.isArray(questions) && questions.length > 0 ? questions : ['Why do you want to apply?']
+      };
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to save form config' });
+    }
+  });
+
   app.post('/api/setup_form', async (req, res) => {
     const { channelId, title, description, buttonLabel, questions } = req.body;
     const channel = client.channels.cache.get(channelId);
@@ -590,7 +627,7 @@ async function startServer() {
         title: title || 'Application Form',
         description: description || 'Click below to apply.',
         buttonLabel: buttonLabel || 'Apply Now',
-        questions: Array.isArray(questions) ? questions.slice(0, 5) : ['Why do you want to apply?']
+        questions: Array.isArray(questions) && questions.length > 0 ? questions : ['Why do you want to apply?']
       };
 
       const embed = new EmbedBuilder()

@@ -222,11 +222,27 @@ export default function App() {
       }
     };
 
+    const fetchFormConfig = async () => {
+      try {
+        const response = await fetch('/api/form_config');
+        if (response.ok) {
+          const data = await response.json();
+          setFormTitle(data.title);
+          setFormDesc(data.description);
+          setFormButton(data.buttonLabel);
+          setFormQuestions(data.questions || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch form config');
+      }
+    };
+
     fetchStatus();
     fetchGuilds();
     fetchTickets();
     fetchLogs();
     fetchPermissions();
+    fetchFormConfig();
     const interval = setInterval(() => {
       fetchStatus();
       fetchTickets();
@@ -771,15 +787,13 @@ export default function App() {
 
                     <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-6 backdrop-blur-sm">
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-bold text-white">Form Questions <span className="text-xs font-normal text-slate-500">(Max 5)</span></h3>
-                        {formQuestions.length < 5 && (
-                          <button 
-                            onClick={() => setFormQuestions([...formQuestions, 'New Question'])}
-                            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-bold text-white transition-colors flex items-center gap-2"
-                          >
-                            <Plus className="w-3 h-3" /> Add
-                          </button>
-                        )}
+                        <h3 className="font-bold text-white">Form Questions <span className="text-xs font-normal text-slate-500">(Unlimited Supported)</span></h3>
+                        <button 
+                          onClick={() => setFormQuestions([...formQuestions, 'New Question'])}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-bold text-white transition-colors flex items-center gap-2"
+                        >
+                          <Plus className="w-3 h-3" /> Add Question
+                        </button>
                       </div>
                       <div className="space-y-3">
                         {formQuestions.map((q, idx) => (
@@ -804,6 +818,29 @@ export default function App() {
                           </div>
                         ))}
                       </div>
+                      <button 
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/save_form', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                title: formTitle,
+                                description: formDesc,
+                                buttonLabel: formButton,
+                                questions: formQuestions
+                              })
+                            });
+                            if (res.ok) alert('✅ Form configuration saved!');
+                            else alert('❌ Failed to save form.');
+                          } catch (err) {
+                            alert('❌ Failed to save form.');
+                          }
+                        }}
+                        className="w-full mt-6 py-2.5 bg-green-600 hover:bg-green-500 rounded-lg text-sm font-bold text-white transition-all shadow-lg"
+                      >
+                        Save Form Configuration
+                      </button>
                     </div>
                   </div>
 
