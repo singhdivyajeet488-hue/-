@@ -69,6 +69,16 @@ try {
   console.error('Failed to parse customFormConfig', err);
 }
 
+const appliedUsersPath = path.join(process.cwd(), 'appliedUsers.json');
+let appliedUsers: string[] = [];
+try {
+  if (fs.existsSync(appliedUsersPath)) {
+    appliedUsers = JSON.parse(fs.readFileSync(appliedUsersPath, 'utf8'));
+  }
+} catch(err) {
+  console.error('Failed to parse appliedUsers', err);
+}
+
 let staffRoleIds: string[] = [];
 
 const appSessions = new Map<string, {
@@ -162,6 +172,15 @@ async function startServer() {
       } else {
         appSessions.delete(message.channel.id);
         
+        if (!appliedUsers.includes(message.author.id)) {
+          appliedUsers.push(message.author.id);
+          try {
+            fs.writeFileSync(appliedUsersPath, JSON.stringify(appliedUsers, null, 2));
+          } catch (err) {
+            console.error('Failed to save appliedUsers:', err);
+          }
+        }
+        
         const appEmbed = new EmbedBuilder()
           .setTitle(`${customFormConfig.title}: ${message.author.tag}`)
           .setDescription('Application completed. Awaiting staff review.')
@@ -173,7 +192,7 @@ async function startServer() {
 
         const closeButton = new ButtonBuilder()
           .setCustomId('close_ticket')
-          .setLabel('Close Ticket')
+          .setLabel('Close (Staff Only)')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -265,11 +284,10 @@ async function startServer() {
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴛɪᴄᴋᴇᴛꜱ');
         
         // Check for existing ticket
-        const userSuffix = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
         const existingTicket = guild.channels.cache.find(c => 
           c.type === ChannelType.GuildText && 
-          (c.parentId === categoryChannel?.id) && 
-          c.name.includes(userSuffix)
+          ['support-', 'report-', 'partner-', 'army-'].some(cat => c.name.startsWith(cat)) &&
+          c.permissionOverwrites.cache.has(interaction.user.id)
         );
 
         if (existingTicket) {
@@ -342,20 +360,24 @@ async function startServer() {
       const guild = interaction.guild;
       if (!guild) return;
 
+      if (appliedUsers.includes(interaction.user.id)) {
+        await interaction.reply({ content: `❌ You have already submitted an application. You cannot apply again.`, ephemeral: true });
+        return;
+      }
+
       await interaction.reply({ content: `⏳ Setting up your application...`, ephemeral: true });
 
       try {
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
         
-        const userSuffix = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const existingTicket = guild.channels.cache.find(c => 
+        const existingApp = guild.channels.cache.find(c => 
           c.type === ChannelType.GuildText && 
-          (c.parentId === categoryChannel?.id) && 
-          c.name.includes(userSuffix)
+          c.name.startsWith('app-') &&
+          c.permissionOverwrites.cache.has(interaction.user.id)
         );
 
-        if (existingTicket) {
-          await interaction.editReply({ content: `❌ You already have an open application: ${existingTicket}` });
+        if (existingApp) {
+          await interaction.editReply({ content: `❌ You already have an open application: ${existingApp}` });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
         }
@@ -398,7 +420,7 @@ async function startServer() {
 
         const closeButtonInit = new ButtonBuilder()
           .setCustomId('close_ticket')
-          .setLabel('Close Application')
+          .setLabel('Close (Staff Only)')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -426,14 +448,21 @@ async function startServer() {
       // Permission Check: Only staff/admins or the ticket creator can close
       const member = interaction.member as any;
       const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
-      const userSuffix = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const isCreator = channel.name.includes(userSuffix);
+      const isCreator = channel.permissionOverwrites.cache.has(interaction.user.id);
+      const isAppTicket = channel.name.startsWith('app-');
       
-      if (!isStaff && !isCreator) {
-        return interaction.reply({ 
-          content: '❌ Only staff members or the ticket creator can close this ticket!', 
-          ephemeral: true 
-        });
+      if (!isStaff) {
+        if (isAppTicket) {
+          return interaction.reply({ 
+            content: '❌ Only staff members can close this application!', 
+            ephemeral: true 
+          });
+        } else if (!isCreator) {
+          return interaction.reply({ 
+            content: '❌ Only staff members or the ticket creator can close this ticket!', 
+            ephemeral: true 
+          });
+        }
       }
 
       await interaction.reply({ content: '🎫 Archiving and closing ticket in 5 seconds...' });
