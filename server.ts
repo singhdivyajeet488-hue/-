@@ -359,7 +359,7 @@ async function startServer() {
 
         const closeButton = new ButtonBuilder()
           .setCustomId('close_ticket')
-          .setLabel('Close Ticket')
+          .setLabel('Close (Staff Only)')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -476,17 +476,10 @@ async function startServer() {
       const isAppTicket = channel.name.startsWith('app-');
       
       if (!isStaff) {
-        if (isAppTicket) {
-          return interaction.reply({ 
-            content: '❌ Only staff members can close this application!', 
-            ephemeral: true 
-          });
-        } else if (!isCreator) {
-          return interaction.reply({ 
-            content: '❌ Only staff members or the ticket creator can close this ticket!', 
-            ephemeral: true 
-          });
-        }
+        return interaction.reply({ 
+          content: '❌ Only staff members can close tickets and applications!', 
+          ephemeral: true 
+        });
       }
 
       await interaction.reply({ content: '🎫 Archiving and closing ticket in 5 seconds...' });
