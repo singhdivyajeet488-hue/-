@@ -69,25 +69,6 @@ try {
   console.error('Failed to parse customFormConfig', err);
 }
 
-const appliedUsersPath = path.join(process.cwd(), 'appliedUsers.json');
-let appliedUsers: string[] = [];
-try {
-  if (fs.existsSync(appliedUsersPath)) {
-    appliedUsers = JSON.parse(fs.readFileSync(appliedUsersPath, 'utf8'));
-  }
-} catch(err) {
-  console.error('Failed to parse appliedUsers', err);
-}
-
-const ticketUsersPath = path.join(process.cwd(), 'ticketUsers.json');
-let ticketUsers: string[] = [];
-try {
-  if (fs.existsSync(ticketUsersPath)) {
-    ticketUsers = JSON.parse(fs.readFileSync(ticketUsersPath, 'utf8'));
-  }
-} catch(err) {
-  console.error('Failed to parse ticketUsers', err);
-}
 
 let staffRoleIds: string[] = [];
 
@@ -191,15 +172,6 @@ async function startServer() {
       } else {
         appSessions.delete(message.channel.id);
         
-        if (!appliedUsers.includes(message.author.id)) {
-          appliedUsers.push(message.author.id);
-          try {
-            fs.writeFileSync(appliedUsersPath, JSON.stringify(appliedUsers, null, 2));
-          } catch (err) {
-            console.error('Failed to save appliedUsers:', err);
-          }
-        }
-        
         const appEmbed = new EmbedBuilder()
           .setTitle(`${customFormConfig.title}: ${message.author.tag}`)
           .setDescription('Application completed. Awaiting staff review.')
@@ -296,9 +268,8 @@ async function startServer() {
         await interaction.reply({ content: '🗑️ Deleting all tickets and applications...' });
         
         let deletedCount = 0;
-        const guild = interaction.guild;
-        if (guild) {
-           const channelsToDelete = guild.channels.cache.filter((c: any) => 
+        for (const [guildId, g] of client.guilds.cache) {
+           const channelsToDelete = g.channels.cache.filter((c: any) => 
               c.type === ChannelType.GuildText && 
               ['support-', 'report-', 'partner-', 'army-', 'app-'].some(cat => c.name.startsWith(cat))
            );
@@ -313,12 +284,14 @@ async function startServer() {
            }
         }
         
-        // Reset users list so they can create new tickets/apps
-        ticketUsers = [];
-        try { fs.writeFileSync(ticketUsersPath, JSON.stringify(ticketUsers, null, 2)); } catch(e){}
-        appliedUsers = [];
-        try { fs.writeFileSync(appliedUsersPath, JSON.stringify(appliedUsers, null, 2)); } catch(e){}
-
+        ticketLogs.length = 0;
+        try {
+          const tPath = path.join(process.cwd(), 'ticketUsers.json');
+          if (fs.existsSync(tPath)) fs.unlinkSync(tPath);
+          const aPath = path.join(process.cwd(), 'appliedUsers.json');
+          if (fs.existsSync(aPath)) fs.unlinkSync(aPath);
+        } catch(e) {}
+        
         try {
            if (interaction.channel && !('deleted' in interaction.channel)) {
              await interaction.editReply({ content: `✅ Deleted ${deletedCount} tickets and applications. Data reset.` });
@@ -391,11 +364,6 @@ async function startServer() {
       const guild = interaction.guild;
       if (!guild) return;
 
-      if (ticketUsers.includes(interaction.user.id)) {
-        await interaction.reply({ content: `❌ You have already created a ticket. You cannot create another one.`, ephemeral: true });
-        return;
-      }
-
       await interaction.reply({ content: `⏳ Creating your **${categoryLabel}** ticket...`, ephemeral: true });
 
       try {
@@ -442,15 +410,6 @@ async function startServer() {
           ],
         });
 
-        if (!ticketUsers.includes(interaction.user.id)) {
-          ticketUsers.push(interaction.user.id);
-          try {
-            fs.writeFileSync(ticketUsersPath, JSON.stringify(ticketUsers, null, 2));
-          } catch (err) {
-            console.error('Failed to save ticketUsers:', err);
-          }
-        }
-
         const ticketEmbed = new EmbedBuilder()
           .setTitle(`ʀᴇᴀʟᴢʏᴠᴏᴋ: ${categoryLabel}`)
           .setDescription(`Hello ${interaction.user}! Welcome to your support ticket. Please describe your issue in detail, and a staff member will assist you shortly.`)
@@ -487,11 +446,6 @@ async function startServer() {
     if (interaction.isButton() && interaction.customId === 'open_custom_form') {
       const guild = interaction.guild;
       if (!guild) return;
-
-      if (appliedUsers.includes(interaction.user.id)) {
-        await interaction.reply({ content: `❌ You have already submitted an application. You cannot apply again.`, ephemeral: true });
-        return;
-      }
 
       await interaction.reply({ content: `⏳ Setting up your application...`, ephemeral: true });
 
