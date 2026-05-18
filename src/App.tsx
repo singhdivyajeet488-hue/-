@@ -121,18 +121,30 @@ export default function App() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'panels' | 'permissions'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'panels' | 'permissions' | 'forms'>('dashboard');
   const [selectedGuild, setSelectedGuild] = useState<string>('');
   const [selectedChannel, setSelectedChannel] = useState<string>('');
-  const [embedTitle, setEmbedTitle] = useState('🎫 ʀᴇᴀʟᴢʏᴠᴏᴋ ꜱᴜᴘᴘᴏʀᴛ');
-  const [embedDesc, setEmbedDesc] = useState('Need help? Select a category from the dropdown menu below to open a support ticket.');
+  const [embedTitle, setEmbedTitle] = useState('🎫 ʀᴇᴀʟᴢʏᴠᴏᴋ ᴀʀᴍʏ | ꜱᴜᴘᴘᴏʀᴛ ᴄᴇɴᴛᴇʀ');
+  const [embedDesc, setEmbedDesc] = useState('Welcome to the **Realzyvok Army Support Center**.\nTo provide you with the best experience, please select a category below.\n\n┃ 🛠️ **Support** - General questions.\n┃ 🛡️ **Reports** - Report a user.\n┃ 🤝 **Partners** - Collaborations.\n\n╰ *Please avoid opening multiple tickets.*');
   const [customMessage, setCustomMessage] = useState('');
   const [categories, setCategories] = useState([
     { label: 'General Support', value: 'support', description: 'General questions or help', emoji: '🛠️' },
-    { label: 'Billing & Payments', value: 'billing', description: 'Related to payments', emoji: '💳' },
-    { label: 'Bug Report', value: 'bug', description: 'Report a technical issue', emoji: '🐛' },
+    { label: 'User Report', value: 'report', description: 'Report a user for any reason', emoji: '🛡️' },
+    { label: 'Partnerships', value: 'partner', description: 'Collaboration inquiries', emoji: '🤝' },
+    { label: 'Army Inquiries', value: 'army', description: 'Army related questions', emoji: '🏆' },
   ]);
-  const [staffRole, setStaffRole] = useState('');
+
+  // Form state
+  const [formTitle, setFormTitle] = useState('📝 Staff Application');
+  const [formDesc, setFormDesc] = useState('Click the button below to start your application.');
+  const [formButton, setFormButton] = useState('Apply Now');
+  const [formQuestions, setFormQuestions] = useState([
+    'What is your age?',
+    'Previous experience?',
+    'Why do you want to join?'
+  ]);
+  const [staffRoles, setStaffRoles] = useState<string[]>([]);
+  const [newRoleInput, setNewRoleInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -198,10 +210,23 @@ export default function App() {
       }
     };
 
+    const fetchPermissions = async () => {
+      try {
+        const response = await fetch('/api/permissions');
+        if (response.ok) {
+          const data = await response.json();
+          setStaffRoles(data.staffRoleIds || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch permissions');
+      }
+    };
+
     fetchStatus();
     fetchGuilds();
     fetchTickets();
     fetchLogs();
+    fetchPermissions();
     const interval = setInterval(() => {
       fetchStatus();
       fetchTickets();
@@ -279,6 +304,53 @@ export default function App() {
     }
   };
 
+  const handleDeployForm = async () => {
+    if (!selectedChannel) {
+      alert('Please select a target channel first.');
+      return;
+    }
+    setDeploying(true);
+    try {
+      const response = await fetch('/api/setup_form', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelId: selectedChannel,
+          title: formTitle,
+          description: formDesc,
+          buttonLabel: formButton,
+          questions: formQuestions
+        }),
+      });
+      if (response.ok) {
+        alert('✅ Application Form deployed successfully!');
+      } else {
+        throw new Error('Deployment failed');
+      }
+    } catch (err) {
+      alert('❌ Failed to deploy form. Check bot permissions.');
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleSavePermissions = async () => {
+    try {
+      const response = await fetch('/api/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roles: staffRoles })
+      });
+      if (response.ok) {
+        alert('✅ Permissions saved!');
+      } else {
+        alert('❌ Failed to save permissions.');
+      }
+    } catch (err) {
+      alert('❌ Failed to save permissions.');
+    }
+  };
+
   const formatUptime = (ms: number | null) => {
     if (!ms) return '0s';
     const seconds = Math.floor((ms / 1000) % 60);
@@ -304,8 +376,8 @@ export default function App() {
           
           <div className="mt-6 text-[10px] uppercase font-bold text-slate-500 mb-2 px-2 tracking-widest">Bot Configuration</div>
           <SidebarItem label="Dropdown Panels" active={activeTab === 'panels'} onClick={() => setActiveTab('panels')} />
+          <SidebarItem label="Application Forms" active={activeTab === 'forms'} onClick={() => setActiveTab('forms')} />
           <SidebarItem label="Permissions" active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')} />
-          <SidebarItem label="Auto-Responder" />
         </nav>
         <div className="p-4 bg-slate-900/50 border-t border-slate-800">
           <div className="flex items-center gap-3">
@@ -399,32 +471,34 @@ export default function App() {
                           </select>
                         </div>
                         <button 
-                          onClick={handleDeploy}
+                          onClick={activeTab === 'forms' ? handleDeployForm : handleDeploy}
                           disabled={deploying || !selectedChannel}
                           className="w-full mt-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 text-white disabled:opacity-50 shadow-lg shadow-indigo-600/20"
                         >
-                          <MessageSquare className="w-3.5 h-3.5" /> Send Ticket Panel
+                          <MessageSquare className="w-3.5 h-3.5" /> {activeTab === 'forms' ? 'Send App Form' : 'Send Ticket Panel'}
                         </button>
                       </div>
                     </div>
 
                     <div className="bg-slate-800/40 rounded-xl p-6 border border-slate-700/50 backdrop-blur-sm">
-                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">2. Embed Visuals</h2>
+                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">
+                        {activeTab === 'forms' ? '2. Form Visuals' : '2. Embed Visuals'}
+                      </h2>
                       <div className="space-y-4">
                         <div>
                           <label className="text-[11px] text-slate-500 font-medium block mb-1">Embed Title</label>
                           <input 
                             type="text" 
-                            value={embedTitle}
-                            onChange={(e) => setEmbedTitle(e.target.value)}
+                            value={activeTab === 'forms' ? formTitle : embedTitle}
+                            onChange={(e) => activeTab === 'forms' ? setFormTitle(e.target.value) : setEmbedTitle(e.target.value)}
                             className="w-full bg-[#0A0F1E] border border-slate-700 rounded p-2 text-sm text-slate-200" 
                           />
                         </div>
                         <div>
                           <label className="text-[11px] text-slate-500 font-medium block mb-1">Description Text</label>
                           <textarea 
-                            value={embedDesc}
-                            onChange={(e) => setEmbedDesc(e.target.value)}
+                            value={activeTab === 'forms' ? formDesc : embedDesc}
+                            onChange={(e) => activeTab === 'forms' ? setFormDesc(e.target.value) : setEmbedDesc(e.target.value)}
                             className="w-full bg-[#0A0F1E] border border-slate-700 rounded p-2 text-sm h-16 resize-none text-slate-200" 
                           />
                         </div>
@@ -497,23 +571,41 @@ export default function App() {
                           </div>
                           
                           <div className="bg-[#2B2D31] border-l-4 border-indigo-500 p-4 rounded max-w-lg shadow-sm">
-                            <h3 className="font-bold text-white mb-2 text-sm">{embedTitle}</h3>
-                            <p className="text-[13px] text-slate-300 leading-relaxed">{embedDesc}</p>
+                            <h3 className="font-bold text-white mb-2 text-sm">{activeTab === 'forms' ? formTitle : embedTitle}</h3>
+                            <div className="text-[13px] text-slate-300 leading-relaxed whitespace-pre-wrap">
+                              {(activeTab === 'forms' ? formDesc : embedDesc).split('\n').map((line, i) => (
+                                <React.Fragment key={i}>
+                                  {line.startsWith('┃') ? (
+                                    <span className="text-indigo-400 font-bold">{line.substring(0, 1)}</span>
+                                  ) : null}
+                                  {line.startsWith('┃') ? line.substring(1) : line}
+                                  <br />
+                                </React.Fragment>
+                              ))}
+                            </div>
                           </div>
 
                           <div className="mt-3 max-w-lg">
-                            <div className="bg-[#1E1F22] border border-[#111214] rounded p-2.5 flex items-center justify-between text-xs text-slate-300 cursor-default">
-                              <span>Select a ticket category...</span>
-                              <ChevronRight className="w-4 h-4 text-slate-500 rotate-90" />
-                            </div>
-                            <div className="mt-4 flex gap-2">
-                              {categories.slice(0, 3).map(cat => (
-                                <div key={cat.value} className="px-3 py-1.5 bg-[#4E5058] hover:bg-[#6D6F78] rounded text-white text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5">
-                                  <span>{cat.emoji}</span>
-                                  {cat.label}
+                            {activeTab === 'forms' ? (
+                              <button className="px-4 py-2 bg-[#5865F2] hover:bg-[#4752C4] rounded text-white text-sm font-medium transition-colors">
+                                {formButton}
+                              </button>
+                            ) : (
+                              <>
+                                <div className="bg-[#1E1F22] border border-[#111214] rounded p-2.5 flex items-center justify-between text-xs text-slate-300 cursor-default">
+                                  <span>Select a ticket category...</span>
+                                  <ChevronRight className="w-4 h-4 text-slate-500 rotate-90" />
                                 </div>
-                              ))}
-                            </div>
+                                <div className="mt-4 flex gap-2">
+                                  {categories.slice(0, 3).map(cat => (
+                                    <div key={cat.value} className="px-3 py-1.5 bg-[#4E5058] hover:bg-[#6D6F78] rounded text-white text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5">
+                                      <span>{cat.emoji}</span>
+                                      {cat.label}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -652,6 +744,111 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            ) : activeTab === 'forms' ? (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white">Application Forms Builder</h2>
+                    <p className="text-slate-500 text-sm">Create forms where the bot asks standard questions in a modal.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-6">
+                  {/* Left Column: Form Settings */}
+                  <div className="col-span-12 lg:col-span-8 space-y-6">
+                    <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-6 backdrop-blur-sm space-y-4">
+                      <h3 className="font-bold text-white">Form Button Setting</h3>
+                      <div>
+                        <label className="text-[10px] uppercase font-bold text-slate-500 tracking-widest pl-1 mb-1 block">Button Label</label>
+                        <input 
+                          type="text" 
+                          value={formButton}
+                          onChange={(e) => setFormButton(e.target.value)}
+                          className="w-full max-w-md bg-[#0A0F1E] border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-6 backdrop-blur-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-bold text-white">Form Questions <span className="text-xs font-normal text-slate-500">(Max 5)</span></h3>
+                        {formQuestions.length < 5 && (
+                          <button 
+                            onClick={() => setFormQuestions([...formQuestions, 'New Question'])}
+                            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-bold text-white transition-colors flex items-center gap-2"
+                          >
+                            <Plus className="w-3 h-3" /> Add
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        {formQuestions.map((q, idx) => (
+                          <div key={idx} className="flex items-center gap-3 bg-black/20 p-3 rounded-xl border border-white/5">
+                            <span className="text-indigo-400 font-bold w-6 text-center">{idx + 1}.</span>
+                            <input 
+                              type="text" 
+                              value={q}
+                              onChange={(e) => {
+                                const newQ = [...formQuestions];
+                                newQ[idx] = e.target.value;
+                                setFormQuestions(newQ);
+                              }}
+                              className="flex-1 bg-[#0A0F1E] border border-slate-700 rounded p-2 text-sm text-slate-200" 
+                            />
+                            <button 
+                              onClick={() => setFormQuestions(formQuestions.filter((_, i) => i !== idx))}
+                              className="p-2 text-slate-500 hover:text-red-400 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Deployment */}
+                  <div className="col-span-12 lg:col-span-4 space-y-6">
+                    <div className="bg-slate-800/40 rounded-xl p-6 border border-slate-700/50 backdrop-blur-sm">
+                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Target Information</h2>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-[11px] text-slate-500 font-medium block mb-1">Select Server</label>
+                          <select 
+                            value={selectedGuild}
+                            onChange={(e) => setSelectedGuild(e.target.value)}
+                            className="w-full bg-[#0A0F1E] border border-slate-700 rounded p-2 text-sm text-slate-200"
+                          >
+                            {guilds.map(g => (
+                              <option key={g.id} value={g.id}>{g.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-500 font-medium block mb-1">Target Channel</label>
+                          <select 
+                            value={selectedChannel}
+                            onChange={(e) => setSelectedChannel(e.target.value)}
+                            className="w-full bg-[#0A0F1E] border border-slate-700 rounded p-2 text-sm text-slate-200"
+                          >
+                            <option value="">Select a channel...</option>
+                            {channels.map(c => (
+                              <option key={c.id} value={c.id}>#{c.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button 
+                          onClick={handleDeployForm}
+                          disabled={deploying || !selectedChannel}
+                          className="w-full mt-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 text-white disabled:opacity-50 shadow-lg shadow-indigo-600/20"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" /> Send App Form
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="flex items-center justify-between">
@@ -672,15 +869,46 @@ export default function App() {
                     <p className="text-xs text-slate-400 leading-relaxed">
                       Members with these roles will be able to see and respond to ticket channels. Enter a Role ID or leave blank for server owners only.
                     </p>
-                    <div className="space-y-2">
-                       <label className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Support Team Role ID</label>
-                       <input 
-                        type="text" 
-                        placeholder="e.g. 123456789012345678"
-                        value={staffRole}
-                        onChange={(e) => setStaffRole(e.target.value)}
-                        className="w-full bg-[#0A0F1E] border border-slate-700 rounded-lg p-3 text-sm text-slate-200 focus:border-indigo-500/50 outline-none transition-all"
-                      />
+                    <div className="space-y-3">
+                      <div className="flex gap-2">
+                        <input 
+                          type="text" 
+                          placeholder="e.g. 123456789012345678"
+                          value={newRoleInput}
+                          onChange={(e) => setNewRoleInput(e.target.value)}
+                          className="flex-1 bg-[#0A0F1E] border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:border-indigo-500/50 outline-none transition-all"
+                        />
+                        <button 
+                          onClick={() => {
+                            if (newRoleInput && !staffRoles.includes(newRoleInput)) {
+                              setStaffRoles([...staffRoles, newRoleInput]);
+                              setNewRoleInput('');
+                            }
+                          }}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-sm font-bold transition-all"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {staffRoles.map(role => (
+                          <div key={role} className="flex items-center justify-between bg-black/20 p-3 rounded-xl border border-white/5">
+                            <span className="text-sm text-slate-300 font-mono">{role}</span>
+                            <button 
+                              onClick={() => setStaffRoles(staffRoles.filter(r => r !== role))}
+                              className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button 
+                        onClick={handleSavePermissions}
+                        className="w-full mt-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-bold text-white transition-all shadow-lg shadow-indigo-600/20"
+                      >
+                        Save Settings
+                      </button>
                     </div>
                   </div>
 

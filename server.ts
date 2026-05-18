@@ -18,7 +18,10 @@ import {
   CacheType,
   ComponentType,
   TextChannel,
-  Message
+  Message,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } from 'discord.js';
 import dotenv from 'dotenv';
 
@@ -31,10 +34,19 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const ticketLogs: any[] = [];
 let categoryMap: Record<string, string> = {
   support: 'General Support',
-  billing: 'Billing & Payments',
-  bug: 'Bug Report',
-  partner: 'Partnerships'
+  report: 'User Report',
+  partner: 'Partnerships',
+  army: 'Army Inquiries'
 };
+
+let customFormConfig = {
+  title: '📝 Staff Application',
+  description: 'Click below to start.',
+  buttonLabel: 'Apply Now',
+  questions: ['What is your age?', 'Previous experience?', 'Why do you want to join?']
+};
+
+let staffRoleIds: string[] = [];
 
 async function startServer() {
   const app = express();
@@ -106,8 +118,8 @@ async function startServer() {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'setup') {
         const embed = new EmbedBuilder()
-          .setTitle('🎫 ʀᴇᴀʟᴢʏᴠᴏᴋ ꜱᴜᴘᴘᴏʀᴛ')
-          .setDescription('Need help? Select a category from the dropdown menu below to open a support ticket. Our staff will be with you shortly!')
+          .setTitle('🎫 ʀᴇᴀʟᴢʏᴠᴏᴋ ᴀʀᴍʏ | ꜱᴜᴘᴘᴏʀᴛ ᴄᴇɴᴛᴇʀ')
+          .setDescription('Welcome to the **Realzyvok Army Support Center**.\nTo provide you with the best experience, please select a category below.\n\n┃ 🛠️ **Support** - General questions.\n┃ 🛡️ **Reports** - Report a user.\n┃ 🤝 **Partners** - Collaborations.\n\n╰ *Please avoid opening multiple tickets.*')
           .setColor('#5865F2')
           .setThumbnail(client.user?.displayAvatarURL() || null);
 
@@ -121,20 +133,20 @@ async function startServer() {
               .setDescription('General questions or help with the server')
               .setEmoji('🛠️'),
             new StringSelectMenuOptionBuilder()
-              .setLabel('Billing & Payments')
-              .setValue('billing')
-              .setDescription('Issues related to payments or subscriptions')
-              .setEmoji('💳'),
-            new StringSelectMenuOptionBuilder()
-              .setLabel('Bug Report')
-              .setValue('bug')
-              .setDescription('Report a technical issue or bug')
-              .setEmoji('🐛'),
+              .setLabel('User Report')
+              .setValue('report')
+              .setDescription('Report a user for any reason')
+              .setEmoji('🛡️'),
             new StringSelectMenuOptionBuilder()
               .setLabel('Partnerships')
               .setValue('partner')
               .setDescription('Inquiries about partnerships or collaborations')
-              .setEmoji('🤝')
+              .setEmoji('🤝'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('Army Inquiries')
+              .setValue('army')
+              .setDescription('Army related questions and info')
+              .setEmoji('🏆')
           );
 
         const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
@@ -166,6 +178,7 @@ async function startServer() {
     // Handle Dropdown Selection
     if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_category') {
       const category = interaction.values[0];
+
       const categoryLabel = categoryMap[category] || (category.charAt(0).toUpperCase() + category.slice(1));
 
       const guild = interaction.guild;
@@ -250,6 +263,116 @@ async function startServer() {
       }
     }
 
+    // Handle Form Button Click
+    if (interaction.isButton() && interaction.customId === 'open_custom_form') {
+      const modal = new ModalBuilder()
+        .setCustomId('custom_form_modal')
+        .setTitle(customFormConfig.title.substring(0, 45) || 'Application Form');
+
+      const inputs = customFormConfig.questions.slice(0, 5).map((q, idx) => {
+        return new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`q_${idx}`)
+            .setLabel(q.substring(0, 45))
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+        );
+      });
+
+      modal.addComponents(...inputs);
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // Handle Form Modal Submit
+    if (interaction.isModalSubmit() && interaction.customId === 'custom_form_modal') {
+      const guild = interaction.guild;
+      if (!guild) return;
+
+      const answers = customFormConfig.questions.slice(0, 5).map((q, idx) => {
+        return {
+          question: q,
+          answer: interaction.fields.getTextInputValue(`q_${idx}`) || 'N/A'
+        };
+      });
+
+      await interaction.reply({ content: `⏳ Submitting your application...`, ephemeral: true });
+
+      try {
+        let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
+        
+        const userSuffix = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const existingTicket = guild.channels.cache.find(c => 
+          c.type === ChannelType.GuildText && 
+          (c.parentId === categoryChannel?.id) && 
+          c.name.includes(userSuffix)
+        );
+
+        if (existingTicket) {
+          await interaction.editReply({ content: `❌ You already have an open application: ${existingTicket}` });
+          setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
+          return;
+        }
+
+        if (!categoryChannel) {
+          try {
+            categoryChannel = await guild.channels.create({
+              name: '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ',
+              type: ChannelType.GuildCategory,
+            });
+          } catch (err) {
+            console.error('Failed to create apps category:', err);
+          }
+        }
+
+        const channel = await guild.channels.create({
+          name: `app-${interaction.user.username}`.toLowerCase(),
+          type: ChannelType.GuildText,
+          parent: categoryChannel?.id,
+          permissionOverwrites: [
+            {
+              id: guild.id,
+              deny: [PermissionFlagsBits.ViewChannel],
+            },
+            {
+              id: interaction.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+            },
+          ],
+        });
+
+        const appEmbed = new EmbedBuilder()
+          .setTitle(`${customFormConfig.title}: ${interaction.user.tag}`)
+          .setDescription('Your application has been received. Please wait for staff review.')
+          .addFields(
+            answers.map(a => ({ name: a.question.substring(0, 256), value: a.answer.substring(0, 1024), inline: false }))
+          )
+          .setColor('#9B59B6')
+          .setTimestamp();
+
+        const closeButton = new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('Close (Staff Only)')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🔒');
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(closeButton);
+
+        await channel.send({ 
+          content: `<@${interaction.user.id}> New Form Submitted.`,
+          embeds: [appEmbed], 
+          components: [row] 
+        });
+        
+        await interaction.editReply({ content: `✅ Submited successfully in ${channel}` });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
+      } catch (error) {
+         console.error('Failed to create app ticket:', error);
+         await interaction.editReply({ content: '❌ Failed to process your application form.' });
+      }
+      return;
+    }
+
     // Handle Button Click (Close Ticket)
     if (interaction.isButton() && interaction.customId === 'close_ticket') {
       const channel = interaction.channel as TextChannel;
@@ -257,7 +380,8 @@ async function startServer() {
 
       // Permission Check: Only staff/admins can close
       const member = interaction.member as any;
-      if (!member?.permissions.has(PermissionFlagsBits.Administrator)) {
+      const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
+      if (!isStaff) {
         return interaction.reply({ 
           content: '❌ Only staff members can close this ticket!', 
           ephemeral: true 
@@ -309,9 +433,14 @@ async function startServer() {
   }
 
   // --- API Routes ---
+  // API routes go here FIRST
+  app.get('/ping', (req, res) => {
+    res.send('pong');
+  });
+
   app.get('/api/status', (req, res) => {
     // Count active tickets across all guilds the bot is in
-    const ticketCategories = ['support-', 'billing-', 'bug-', 'partner-'];
+    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-'];
     let activeTickets = 0;
     
     if (client.isReady()) {
@@ -340,7 +469,7 @@ async function startServer() {
   app.get('/api/tickets', (req, res) => {
     if (!client.isReady()) return res.status(503).json({ error: 'Bot is not ready' });
     
-    const ticketCategories = ['support-', 'billing-', 'bug-', 'partner-'];
+    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-'];
     const tickets: any[] = [];
     
     client.guilds.cache.forEach(guild => {
@@ -414,9 +543,9 @@ async function startServer() {
         .addOptions(
           (customCategories || [
             { label: 'General Support', value: 'support', description: 'General questions or help', emoji: '🛠️' },
-            { label: 'Billing & Payments', value: 'billing', description: 'Related to payments', emoji: '💳' },
-            { label: 'Bug Report', value: 'bug', description: 'Report a technical issue', emoji: '🐛' },
-            { label: 'Partnerships', value: 'partner', description: 'Inquiries about partnerships', emoji: '🤝' }
+            { label: 'User Report', value: 'report', description: 'Report a user for any reason', emoji: '🛡️' },
+            { label: 'Partnerships', value: 'partner', description: 'Inquiries about partnerships', emoji: '🤝' },
+            { label: 'Army Inquiries', value: 'army', description: 'Army related questions', emoji: '🏆' }
           ]).map((cat: any) => 
             new StringSelectMenuOptionBuilder()
               .setLabel(cat.label)
@@ -433,6 +562,56 @@ async function startServer() {
     } catch (error) {
       console.error('Manual setup failed:', error);
       res.status(500).json({ error: 'Failed to send message to channel' });
+    }
+  });
+
+  app.post('/api/permissions', (req, res) => {
+    const { roles } = req.body;
+    if (Array.isArray(roles)) {
+      staffRoleIds = roles;
+    }
+    res.json({ success: true, staffRoleIds });
+  });
+
+  app.get('/api/permissions', (req, res) => {
+    res.json({ staffRoleIds });
+  });
+
+  app.post('/api/setup_form', async (req, res) => {
+    const { channelId, title, description, buttonLabel, questions } = req.body;
+    const channel = client.channels.cache.get(channelId);
+
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      return res.status(400).json({ error: 'Invalid text channel' });
+    }
+
+    try {
+      customFormConfig = {
+        title: title || 'Application Form',
+        description: description || 'Click below to apply.',
+        buttonLabel: buttonLabel || 'Apply Now',
+        questions: Array.isArray(questions) ? questions.slice(0, 5) : ['Why do you want to apply?']
+      };
+
+      const embed = new EmbedBuilder()
+        .setTitle(customFormConfig.title)
+        .setDescription(customFormConfig.description)
+        .setColor('#9B59B6')
+        .setThumbnail(client.user?.displayAvatarURL() || null);
+
+      const button = new ButtonBuilder()
+        .setCustomId('open_custom_form')
+        .setLabel(customFormConfig.buttonLabel)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📝');
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
+
+      await channel.send({ embeds: [embed], components: [row] });
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Form manual setup failed:', error);
+      res.status(500).json({ error: 'Failed to send msg' });
     }
   });
 
@@ -469,6 +648,20 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌍 Dashboard running on http://localhost:${PORT}`);
+    
+    // Self-ping to keep Render free tier alive
+    const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
+    if (RENDER_URL) {
+      console.log(`📡 Self-ping active: ${RENDER_URL}/ping`);
+      setInterval(async () => {
+        try {
+          const res = await fetch(`${RENDER_URL}/ping`);
+          console.log(`Pinged ${RENDER_URL}/ping: ${res.statusText}`);
+        } catch (err) {
+          console.error('Self-ping failed:', err);
+        }
+      }, 10 * 60 * 1000); // Ping every 10 minutes
+    }
   });
 }
 
