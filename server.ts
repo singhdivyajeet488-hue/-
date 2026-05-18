@@ -79,6 +79,16 @@ try {
   console.error('Failed to parse appliedUsers', err);
 }
 
+const ticketUsersPath = path.join(process.cwd(), 'ticketUsers.json');
+let ticketUsers: string[] = [];
+try {
+  if (fs.existsSync(ticketUsersPath)) {
+    ticketUsers = JSON.parse(fs.readFileSync(ticketUsersPath, 'utf8'));
+  }
+} catch(err) {
+  console.error('Failed to parse ticketUsers', err);
+}
+
 let staffRoleIds: string[] = [];
 
 const appSessions = new Map<string, {
@@ -277,6 +287,11 @@ async function startServer() {
       const guild = interaction.guild;
       if (!guild) return;
 
+      if (ticketUsers.includes(interaction.user.id)) {
+        await interaction.reply({ content: `❌ You have already created a ticket. You cannot create another one.`, ephemeral: true });
+        return;
+      }
+
       await interaction.reply({ content: `⏳ Creating your **${categoryLabel}** ticket...`, ephemeral: true });
 
       try {
@@ -322,6 +337,15 @@ async function startServer() {
             },
           ],
         });
+
+        if (!ticketUsers.includes(interaction.user.id)) {
+          ticketUsers.push(interaction.user.id);
+          try {
+            fs.writeFileSync(ticketUsersPath, JSON.stringify(ticketUsers, null, 2));
+          } catch (err) {
+            console.error('Failed to save ticketUsers:', err);
+          }
+        }
 
         const ticketEmbed = new EmbedBuilder()
           .setTitle(`ʀᴇᴀʟᴢʏᴠᴏᴋ: ${categoryLabel}`)
