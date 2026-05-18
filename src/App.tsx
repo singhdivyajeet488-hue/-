@@ -271,6 +271,28 @@ export default function App() {
     fetchChannels();
   }, [selectedGuild]);
 
+  const handleResetAll = async () => {
+    if (!confirm('⚠️ Are you sure you want to delete ALL active tickets and clear ALL transcript logs across all servers? This action is irreversible.')) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch('/api/reset_all', { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        alert(`✅ System reset successful. Deleted ${data.deletedCount} channels and cleared logs.`);
+        // Refresh logs and tickets
+        setLogs([]);
+        setTickets([]);
+      } else {
+        alert('❌ Reset failed.');
+      }
+    } catch (err) {
+      alert('❌ Error connecting to server.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!selectedChannel || !customMessage) return;
     setDeploying(true);
@@ -425,7 +447,13 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <button className="px-4 py-1.5 bg-slate-800 rounded text-xs font-semibold hover:bg-slate-700 transition-colors border border-slate-700">Discard</button>
+            <button 
+              onClick={handleResetAll}
+              className="px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded text-xs font-bold transition-colors border border-red-500/20 flex items-center gap-2"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Reset System Data
+            </button>
             <button 
               onClick={handleDeploy}
               disabled={deploying || !selectedChannel}

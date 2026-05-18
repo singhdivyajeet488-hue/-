@@ -265,13 +265,15 @@ async function startServer() {
           return interaction.reply({ content: '❌ Only staff members can use this command.', ephemeral: true });
         }
 
-        await interaction.reply({ content: '🗑️ Deleting all tickets and applications...' });
+        await interaction.reply({ content: '🗑️ Deleting all tickets and applications across all servers...' });
         
         let deletedCount = 0;
+        const ticketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
+        
         for (const [guildId, g] of client.guilds.cache) {
            const channelsToDelete = g.channels.cache.filter((c: any) => 
               c.type === ChannelType.GuildText && 
-              ['support-', 'report-', 'partner-', 'army-', 'app-'].some(cat => c.name.startsWith(cat))
+              ticketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix))
            );
 
            for (const [id, c] of channelsToDelete) {
@@ -279,12 +281,15 @@ async function startServer() {
                 await c.delete();
                 deletedCount++;
              } catch(err) {
-                console.error('Failed to delete channel:', err);
+                console.error(`Failed to delete channel ${c.name} in guild ${g.name}:`, err);
              }
            }
         }
         
+        // Reset all data
         ticketLogs.length = 0;
+        appSessions.clear();
+        
         try {
           const tPath = path.join(process.cwd(), 'ticketUsers.json');
           if (fs.existsSync(tPath)) fs.unlinkSync(tPath);
@@ -294,7 +299,7 @@ async function startServer() {
         
         try {
            if (interaction.channel && !('deleted' in interaction.channel)) {
-             await interaction.editReply({ content: `✅ Deleted ${deletedCount} tickets and applications. Data reset.` });
+             await interaction.editReply({ content: `✅ Deleted ${deletedCount} tickets and applications. All data and logs have been reset.` });
            }
         } catch(e) {}
       }
@@ -303,8 +308,8 @@ async function startServer() {
         const channel = interaction.channel as TextChannel;
         if (!channel || channel.type !== ChannelType.GuildText) return;
 
-        const isAppTicket = channel.name.startsWith('app-');
-        const isTicket = ['support-', 'report-', 'partner-', 'army-'].some(cat => channel.name.startsWith(cat));
+        const isAppTicket = channel.name.toLowerCase().startsWith('app-') || channel.name.toLowerCase().startsWith('application-');
+        const isTicket = ['support-', 'report-', 'partner-', 'army-', 'ticket-'].some(prefix => channel.name.toLowerCase().startsWith(prefix));
 
         if (!isAppTicket && !isTicket) {
            return interaction.reply({ content: '❌ This command can only be used in tickets or applications.', ephemeral: true });
@@ -370,15 +375,18 @@ async function startServer() {
         // Find or create '🎫 ᴛɪᴄᴋᴇᴛꜱ' category
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴛɪᴄᴋᴇᴛꜱ');
         
-        // Check for existing ticket
-        const existingTicket = guild.channels.cache.find(c => 
+        // Check for ANY existing ticket or application channel for this user
+        const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
+        const existingChannel = guild.channels.cache.find(c => 
           c.type === ChannelType.GuildText && 
-          ['support-', 'report-', 'partner-', 'army-'].some(cat => c.name.startsWith(cat)) &&
+          allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
           c.permissionOverwrites.cache.has(interaction.user.id)
         );
 
-        if (existingTicket) {
-          await interaction.editReply({ content: `❌ You already have an open ticket: ${existingTicket}` });
+        if (existingChannel) {
+          await interaction.editReply({ 
+            content: `❌ You already have an active ticket or application: ${existingChannel}. Please close it before opening a new one.` 
+          });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
         }
@@ -452,14 +460,18 @@ async function startServer() {
       try {
         let categoryChannel = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🎫 ᴀᴘᴘʟɪᴄᴀᴛɪᴏɴꜱ');
         
-        const existingApp = guild.channels.cache.find(c => 
+        // Check for ANY existing ticket or application channel for this user
+        const allTicketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
+        const existingChannel = guild.channels.cache.find(c => 
           c.type === ChannelType.GuildText && 
-          c.name.startsWith('app-') &&
+          allTicketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix)) &&
           c.permissionOverwrites.cache.has(interaction.user.id)
         );
 
-        if (existingApp) {
-          await interaction.editReply({ content: `❌ You already have an open application: ${existingApp}` });
+        if (existingChannel) {
+          await interaction.editReply({ 
+            content: `❌ You already have an active ticket or application: ${existingChannel}. Please close it before opening a new one.` 
+          });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
           return;
         }
@@ -530,8 +542,9 @@ async function startServer() {
       // Permission Check: Only staff/admins or the ticket creator can close
       const member = interaction.member as any;
       const isStaff = member?.permissions.has(PermissionFlagsBits.Administrator) || member?.roles?.cache?.some((r: any) => staffRoleIds.includes(r.id));
-      const isCreator = channel.permissionOverwrites.cache.has(interaction.user.id);
-      const isAppTicket = channel.name.startsWith('app-');
+      
+      // Allow creator to CLOSE their ticket too if you want, but user said "Staff only" in some places.
+      // Usually it's better if staff closes to ensure transcript is logged.
       
       if (!isStaff) {
         return interaction.reply({ 
@@ -540,7 +553,7 @@ async function startServer() {
         });
       }
 
-      await interaction.reply({ content: '🎫 Archiving and closing ticket in 5 seconds...' });
+      await interaction.reply({ content: '🎫 Archiving and closing in 5 seconds...' });
       
       const logEntry = {
         id: channel.id,
@@ -592,7 +605,7 @@ async function startServer() {
 
   app.get('/api/status', (req, res) => {
     // Count active tickets across all guilds the bot is in
-    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-'];
+    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
     let activeTickets = 0;
     
     if (client.isReady()) {
@@ -621,7 +634,7 @@ async function startServer() {
   app.get('/api/tickets', (req, res) => {
     if (!client.isReady()) return res.status(503).json({ error: 'Bot is not ready' });
     
-    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-'];
+    const ticketCategories = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-', 'application-'];
     const tickets: any[] = [];
     
     client.guilds.cache.forEach(guild => {
@@ -665,6 +678,44 @@ async function startServer() {
         name: c.name
       }));
     res.json(channels);
+  });
+
+  app.post('/api/reset_all', async (req, res) => {
+    if (!client.isReady()) return res.status(503).json({ error: 'Bot is not ready' });
+
+    try {
+      let deletedCount = 0;
+      const ticketPrefixes = ['support-', 'report-', 'partner-', 'army-', 'app-', 'ticket-'];
+      
+      for (const [guildId, g] of client.guilds.cache) {
+         const channelsToDelete = g.channels.cache.filter((c: any) => 
+            c.type === ChannelType.GuildText && 
+            ticketPrefixes.some(prefix => c.name.toLowerCase().startsWith(prefix))
+         );
+
+         for (const [id, c] of channelsToDelete) {
+           try {
+              await c.delete();
+              deletedCount++;
+           } catch(err) {
+              console.error(`Failed to delete channel ${c.name} in guild ${g.name}:`, err);
+           }
+         }
+      }
+      
+      ticketLogs.length = 0;
+      try {
+        const tPath = path.join(process.cwd(), 'ticketUsers.json');
+        if (fs.existsSync(tPath)) fs.unlinkSync(tPath);
+        const aPath = path.join(process.cwd(), 'appliedUsers.json');
+        if (fs.existsSync(aPath)) fs.unlinkSync(aPath);
+      } catch(e) {}
+
+      res.json({ success: true, deletedCount });
+    } catch (error) {
+      console.error('Reset all failed:', error);
+      res.status(500).json({ error: 'Failed to reset data' });
+    }
   });
 
   app.post('/api/setup', async (req, res) => {
